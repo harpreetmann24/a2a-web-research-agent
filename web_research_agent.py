@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import llm, load_env  # noqa: E402
+from common import langfuse_callbacks, llm, load_env, tracing_enabled  # noqa: E402
 
 load_env()  # before building the model below
 
@@ -27,6 +27,7 @@ from a2a.server.request_handlers import DefaultRequestHandler  # noqa: E402
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes  # noqa: E402
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater  # noqa: E402
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, Role, TaskState  # noqa: E402
+from google.protobuf.json_format import MessageToDict  # noqa: E402
 from langchain.agents import create_agent  # noqa: E402
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 from langchain_core.tools import tool  # noqa: E402
@@ -73,17 +74,39 @@ class WebResearchExecutor(AgentExecutor):
             return new_text_message(text, context_id=context.context_id, task_id=context.task_id, role=Role.ROLE_AGENT)
 
         await updater.start_work(status("Starting web research..."))
-        answer = ""
-        async for chunk in research_agent.astream({"messages": [HumanMessage(context.get_user_input())]},
-                                                  config={"recursion_limit": 8}, stream_mode="updates"):
-            for update in chunk.values():
-                for m in update.get("messages", []):
-                    if isinstance(m, AIMessage) and m.tool_calls:
-                        for tc in m.tool_calls:
-                            await updater.update_status(TaskState.TASK_STATE_WORKING,
-                                                        status(f"Calling {tc['name']}({tc['args']})"))
-                    elif isinstance(m, AIMessage) and m.content:
-                        answer = m.content if isinstance(m.content, str) else str(m.content)
+        question = context.get_user_input()
+        # Distributed tracing: the caller may send its Langfuse trace id in the A2A message metadata,
+        # so this agent's spans join the caller's trace instead of starting a new one.
+        meta = MessageToDict(context.message.metadata) if context.message and context.message.metadata else {}
+        trace_ctx = ({"trace_id": meta["langfuse_trace_id"], "parent_span_id": meta.get("langfuse_parent_span_id")}
+                     if meta.get("langfuse_trace_id") else None)
+
+        async def run() -> str:
+            answer = ""
+            async for chunk in research_agent.astream(
+                    {"messages": [HumanMessage(question)]}, stream_mode="updates",
+                    config={"recursion_limit": 8, "callbacks": langfuse_callbacks()}):
+                for update in chunk.values():
+                    for m in update.get("messages", []):
+                        if isinstance(m, AIMessage) and m.tool_calls:
+                            for tc in m.tool_calls:
+                                await updater.update_status(TaskState.TASK_STATE_WORKING,
+                                                            status(f"Calling {tc['name']}({tc['args']})"))
+                        elif isinstance(m, AIMessage) and m.content:
+                            answer = m.content if isinstance(m.content, str) else str(m.content)
+            return answer
+
+        if tracing_enabled():
+            from langfuse import get_client
+            lf = get_client()
+            with lf.start_as_current_observation(name="web-research-agent (A2A)", as_type="agent", input=question,
+                                                 trace_context=trace_ctx,
+                                                 metadata={"a2a_task_id": context.task_id}) as span:
+                answer = await run()
+                span.update(output=answer)
+            lf.flush()
+        else:
+            answer = await run()
         await updater.add_artifact([new_text_part(answer)], name="answer")
         await updater.complete()
 

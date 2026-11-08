@@ -1,4 +1,4 @@
-# A2A Web Research Agent
+﻿# A2A Web Research Agent
 
 A small LangGraph agent served over the [A2A protocol](https://github.com/a2aproject) with `a2a-sdk` 1.3.0.
 It's a teaching prototype for an agents-in-production class.
@@ -25,5 +25,6 @@ Free Docker web service; `render.yaml` describes it. Set these environment varia
 | `OPENROUTER_API_KEY` | an OpenRouter key with a small credit limit |
 | `A2A_TOKEN` | a long random string that callers must send as a Bearer token |
 | `PUBLIC_URL` | the service URL, e.g. `https://a2a-web-research-agent.onrender.com/` |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | optional: Langfuse tracing (spans join the caller's trace via A2A message metadata) |
 
 Render provides `PORT`; the app listens on it.

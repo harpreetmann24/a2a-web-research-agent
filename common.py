@@ -21,6 +21,19 @@ def load_env(path: str | os.PathLike | None = None) -> None:
                 os.environ.setdefault(k.strip(), v.strip())
 
 
+def tracing_enabled() -> bool:
+    """Langfuse tracing is on only when both keys are configured."""
+    return bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
+
+
+def langfuse_callbacks(trace_context: dict | None = None) -> list:
+    """LangChain callbacks that send the run to Langfuse (empty list when tracing is off)."""
+    if not tracing_enabled():
+        return []
+    from langfuse.langchain import CallbackHandler
+    return [CallbackHandler(trace_context=trace_context)] if trace_context else [CallbackHandler()]
+
+
 def llm(model: str = AGENT_MODEL, max_tokens: int = 1024) -> ChatOpenAI:
     return ChatOpenAI(
         model=model,
