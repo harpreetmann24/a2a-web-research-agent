@@ -1,0 +1,17 @@
+# Render Blueprint: one free Docker web service.
+services:
+  - type: web
+    name: a2a-web-research-agent
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /.well-known/agent-card.json
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: A2A_TOKEN
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: AGENT_MODEL
+        value: anthropic/claude-haiku-5.5
